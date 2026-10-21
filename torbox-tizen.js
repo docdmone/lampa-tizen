@@ -7528,7 +7528,7 @@
           const renderQualityBadge = (root, info) => {
             if (!info || !root || root.find(".torbox-qbadge").length) return;
             const isTs = info.best === "TS/CAM";
-            const text = isTs ? "\u042D\u043A\u0440\u0430\u043D\u043A\u0430" : info.best + (info.hasTs ? " \xB7 \u0435\u0441\u0442\u044C TS" : "");
+            const text = isTs ? "\u042D\u043A\u0440\u0430\u043D\u043A\u0430" : info.best;
             const badge = $('<div class="full-start__status torbox-qbadge"></div>').text(text);
             badge.css({
               marginLeft: "0.6em",
@@ -7552,23 +7552,23 @@
             Api.searchPublicTrackers(movie, controller.signal).then((payload) => {
               const map = payload === null || payload === void 0 ? void 0 : payload.entriesByHash;
               if (!(map instanceof Map) || !map.size) return;
-              let best = null;
-              let hasTs = false;
-              map.forEach((raw) => {
-                const q = Utils.getQualityLabel((raw === null || raw === void 0 ? void 0 : raw.Title) || "", raw);
-                if (q === "TS/CAM") {
-                  hasTs = true;
-                  return;
-                }
-                if (!best || qbRank(q) > qbRank(best)) best = q;
-              });
-              const info = best ? {
-                best: qbName(best),
-                hasTs
-              } : hasTs ? {
-                best: "TS/CAM",
-                hasTs
-              } : null;
+              const all = Array.from(map.values()).map((raw) => ({
+                q: Utils.getQualityLabel((raw === null || raw === void 0 ? void 0 : raw.Title) || "", raw),
+                seeds: Number(raw === null || raw === void 0 ? void 0 : raw.Seeders) || 0
+              })).sort((a, b) => b.seeds - a.seeds);
+              const normal = all.filter((t) => t.q !== "TS/CAM");
+              let info = null;
+              if (normal.length) {
+                let best = null;
+                normal.forEach((t) => {
+                  if (!best || qbRank(t.q) > qbRank(best)) best = t.q;
+                });
+                info = {
+                  best: qbName(best)
+                };
+              } else if (all.length) info = {
+                best: "TS/CAM"
+              };
               if (!info) return;
               qualityBadgeCache.set(key, info);
               if (document.body.contains(root[0])) renderQualityBadge(root, info);
