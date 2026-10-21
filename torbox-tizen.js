@@ -4128,6 +4128,24 @@
           if (/720p|hd/i.test(title)) return "HD";
           return "SD";
         },
+        parseSeasonEpisode(fullName = "") {
+          const full = String(fullName || "");
+          const parts = full.split("/");
+          const base = parts.pop() || "";
+          const dirs = parts.join("/");
+          let m = base.match(/[Ss](\d{1,2})[ ._-]?[Ee](\d{1,3})/) || base.match(/(?:^|[^\d])(\d{1,2})x(\d{1,3})(?:[^\d]|$)/);
+          if (m) return {
+            s: Number(m[1]),
+            e: Number(m[2])
+          };
+          const sm = dirs.match(/(?:season|сезон|sezon)[ ._-]*(\d{1,2})/i) || dirs.match(/(\d{1,2})[ ._-]*(?:season|сезон)/i) || dirs.match(/(?:^|[^a-z])s(\d{1,2})(?:[^\d]|$)/i);
+          const em = base.match(/(?:^|[^a-z])(?:e|ep|episode|серия|серія)[ ._-]*(\d{1,3})(?:[^\d]|$)/i) || base.match(/(\d{1,3})[ ._-]*(?:серия|серія)/i) || base.match(/^(\d{1,3})(?:[ ._-]|\.\w+$)/) || base.match(/ - (\d{1,3})(?:[ ._]|\.\w+$)/);
+          if (em) return {
+            s: sm ? Number(sm[1]) : null,
+            e: Number(em[1])
+          };
+          return null;
+        },
         naturalEpisodeSort(a, b) {
           var _a$__idx, _b$__idx;
           const chunk = /(\d+)/g;
@@ -4994,7 +5012,7 @@
       }
       function MainComponent(object) {
         let scroll = new Lampa.Scroll({
-          mask: true,
+          mask: false,
           over: true,
           step: 250
         });
@@ -5090,6 +5108,7 @@
           FILTER: "filter",
           FILE: "file",
           FILE_DOWNLOAD: "file_download",
+          SEASON: "season",
           EMPTY: "empty"
         });
         const focusState = {
@@ -5196,6 +5215,8 @@
               return root.find(".torbox-file-item.selector");
             case FocusZones.FILE_DOWNLOAD:
               return root.find(".torbox-file-download.selector");
+            case FocusZones.SEASON:
+              return root.find(".torbox-season-tab.selector");
             default:
               return $();
           }
@@ -5208,6 +5229,7 @@
             return FocusZones.FILTER;
           }
           if (element.hasClass("torbox-file-download")) return FocusZones.FILE_DOWNLOAD;
+          if (element.hasClass("torbox-season-tab")) return FocusZones.SEASON;
           if (element.hasClass("torbox-file-item")) return FocusZones.FILE;
           if (element.hasClass("empty")) return FocusZones.EMPTY;
           return null;
@@ -5336,7 +5358,11 @@
               Lampa.Controller.toggle("head");
               return true;
             },
-            down: () => focusListByIndex(focusState.index + 1) || focusListByIndex(focusState.index),
+            down: () => {
+              const next = focusState.index + 1;
+              if (next >= pagedList.rendered && pagedList.rendered < pagedList.items.length) pagedList.render(LIST_PAGE_SIZE);
+              return focusListByIndex(next) || focusListByIndex(focusState.index);
+            },
             left: () => {
               Lampa.Controller.toggle("menu");
               return true;
@@ -5390,8 +5416,26 @@
               return true;
             }
           },
+          [FocusZones.SEASON]: {
+            up: () => true,
+            down: () => focusFileItem(0) || true,
+            left: () => {
+              if (focusState.index > 0) return focusZone(FocusZones.SEASON, focusState.index - 1);
+              Lampa.Controller.toggle("menu");
+              return true;
+            },
+            right: () => focusZone(FocusZones.SEASON, focusState.index + 1) || true
+          },
           [FocusZones.FILE]: {
-            up: () => focusFileItem(focusState.index - 1) || focusFileItem(focusState.index),
+            up: () => {
+              if (focusState.index > 0) return focusFileItem(focusState.index - 1);
+              const tabs = getFocusCollection(FocusZones.SEASON);
+              if (tabs.length) {
+                const active = tabs.filter(".active");
+                return focusElement(active.length ? active.first() : tabs.first());
+              }
+              return focusFileItem(0);
+            },
             down: () => focusFileItem(focusState.index + 1) || focusFileItem(focusState.index),
             left: () => {
               Lampa.Controller.toggle("menu");
@@ -5611,7 +5655,7 @@
             watchedSet = /* @__PURE__ */ new Set();
             Store.set("torbox_watched_episodes_".concat(mid, "_").concat(torrentKey), "[]");
           }
-          const preferredFocusId = preferredFile && preferredFile.id !== void 0 && preferredFile.id !== null ? String(preferredFile.id) : null;
+          let preferredFocusId = preferredFile && preferredFile.id !== void 0 && preferredFile.id !== null ? String(preferredFile.id) : null;
           const storedLastPlayedId = Store.get("torbox_last_played_file_".concat(mid, "_").concat(torrentKey), null);
           const videoExtensions = getVideoExtensions();
           const videoRegex = new RegExp("\\.(".concat(videoExtensions.map((ext) => ext.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"), ")$"), "i");
@@ -5626,11 +5670,97 @@
           }
           let focusEl = null;
           let firstFileEl = null;
-          vids.forEach((file, idx) => {
+          const origTitleForTl = object.movie.original_title || object.movie.original_name || object.movie.title || "";
+          vids.forEach((f) => {
+            const p = Utils.parseSeasonEpisode(f.name);
+            f.__s = p ? p.s : null;
+            f.__e = p ? p.e : null;
+          });
+          const parsedCount = vids.filter((f) => f.__e != null).length;
+          const pretty = parsedCount > 0 && parsedCount >= vids.length * 0.7;
+          if (pretty) {
+            vids.forEach((f) => {
+              if (f.__e != null && f.__s == null) f.__s = 1;
+            });
+            vids.sort((a, b) => (a.__s || 0) - (b.__s || 0) || (a.__e == null ? 1e6 : a.__e) - (b.__e == null ? 1e6 : b.__e) || a.__idx - b.__idx);
+          }
+          const seasons = pretty ? Array.from(new Set(vids.filter((f) => f.__s != null).map((f) => f.__s))).sort((a, b) => a - b) : [];
+          const useSeasons = seasons.length > 1;
+          const tlPercent = (f) => {
+            if (!pretty || f.__e == null || !Lampa.Timeline || typeof Lampa.Timeline.view !== "function") return 0;
+            try {
+              const key = [f.__s, f.__s > 10 ? ":" : "", f.__e, origTitleForTl].join("");
+              const v = Lampa.Timeline.view(Lampa.Utils.hash(key));
+              return Number(v && v.percent) || 0;
+            } catch (_unused12) {
+              return 0;
+            }
+          };
+          let autoplayFileId = null;
+          if (state.autoplay_continue) {
+            state.autoplay_continue = false;
+            const anchorId = preferredFocusId || (storedLastPlayedId !== null ? String(storedLastPlayedId) : null);
+            let ai = anchorId ? vids.findIndex((f) => String(f.id) === anchorId) : -1;
+            if (ai < 0) ai = Math.max(0, vids.findIndex((f) => !watchedSet.has(String(f.id))));
+            if (tlPercent(vids[ai]) >= 90 && vids[ai + 1]) ai += 1;
+            autoplayFileId = String(vids[ai].id);
+            preferredFocusId = autoplayFileId;
+            if (useSeasons && vids[ai].__s != null) {
+              state.episode_season = state.episode_season || {};
+              state.episode_season[torrentKey] = vids[ai].__s;
+            }
+          }
+          let shownVids = vids;
+          let seasonFocusTab = null;
+          if (useSeasons) {
+            state.episode_season = state.episode_season || {};
+            let selected = state.episode_season[torrentKey];
+            if (!seasons.includes(selected)) {
+              const anchorId = preferredFocusId || (storedLastPlayedId !== null ? String(storedLastPlayedId) : null);
+              const anchor = anchorId ? vids.find((f) => String(f.id) === anchorId) : null;
+              const firstUnwatched = vids.find((f) => f.__s != null && !watchedSet.has(String(f.id)));
+              selected = anchor && anchor.__s || firstUnwatched && firstUnwatched.__s || seasons[0];
+              state.episode_season[torrentKey] = selected;
+            }
+            shownVids = vids.filter((f) => f.__s === selected);
+            const tabsRow = $('<div class="torbox-season-tabs"></div>');
+            seasons.forEach((sn, ti) => {
+              const tab = $('<div class="torbox-season-tab selector"></div>').text(translateWithParams("torbox_season_n", {
+                value: sn
+              })).toggleClass("active", sn === selected).data("torboxZone", FocusZones.SEASON).data("torboxIndex", ti).on("hover:focus", (e) => {
+                updateFocusMetaFromElement($(e.currentTarget));
+                scroll.update($(e.currentTarget), true);
+              }).on("hover:enter", () => {
+                if (state.episode_season[torrentKey] === sn) return focusFileItem(0);
+                state.episode_season[torrentKey] = sn;
+                state.episode_focus_season_tab = sn;
+                drawEpisodes(torrentData);
+              });
+              if (state.episode_focus_season_tab === sn) seasonFocusTab = tab;
+              tabsRow.append(tab);
+            });
+            state.episode_focus_season_tab = null;
+            scroll.append(tabsRow);
+          }
+          let autoFocusId = null;
+          if (!preferredFocusId) {
+            const lastIdx = storedLastPlayedId !== null ? shownVids.findIndex((f) => String(f.id) === String(storedLastPlayedId)) : -1;
+            if (lastIdx >= 0) {
+              const last = shownVids[lastIdx];
+              autoFocusId = tlPercent(last) >= 90 && shownVids[lastIdx + 1] ? String(shownVids[lastIdx + 1].id) : String(last.id);
+            } else {
+              const fu = shownVids.find((f) => !watchedSet.has(String(f.id)));
+              if (fu) autoFocusId = String(fu.id);
+            }
+          }
+          shownVids.forEach((file, idx) => {
             const clean = (file.name || "").split("/").pop();
+            const epTitle = pretty && file.__e != null ? (useSeasons ? "" : file.__s ? "S".concat(file.__s, " \xB7 ") : "") + translateWithParams("torbox_episode_n", {
+              value: file.__e
+            }) : null;
             let item = Lampa.Template.get("torbox_episode_item", {
-              title: Utils.escapeHtml(clean || file.name || translate("torbox_no_title")),
-              size: Utils.formatBytes(file.size || 0),
+              title: Utils.escapeHtml(epTitle || clean || file.name || translate("torbox_no_title")),
+              size: Utils.formatBytes(file.size || 0) + (epTitle ? " \xB7 ".concat(Utils.escapeHtml(clean)) : ""),
               file_id: Utils.escapeHtml(String(file.id)),
               download_label: Utils.escapeHtml(translate("torbox_file_download"))
             });
@@ -5638,7 +5768,11 @@
             const fileIdStr = String(file.id);
             const isWatched = watchedSet.has(fileIdStr);
             const isLastPlayed = storedLastPlayedId !== null && fileIdStr === String(storedLastPlayedId);
-            const shouldFocus = preferredFocusId ? fileIdStr === preferredFocusId : isLastPlayed;
+            const shouldFocus = preferredFocusId ? fileIdStr === preferredFocusId : autoFocusId ? fileIdStr === autoFocusId : isLastPlayed;
+            const pct = tlPercent(file);
+            if (pct > 0) {
+              item.append('<div class="torbox-item__progress"><div style="width:'.concat(Utils.clamp(Math.round(pct), 0, 100), '%"></div></div>'));
+            }
             const downloadBtn = item.find(".torbox-file-download");
             if (isWatched) item.addClass("torbox-file-item--watched");
             if (isLastPlayed) {
@@ -5686,8 +5820,13 @@
             });
             scroll.append(item);
           });
-          if (focusEl || firstFileEl) focusElement(focusEl || firstFileEl);
+          if (seasonFocusTab) focusElement(seasonFocusTab);
+          else if (focusEl || firstFileEl) focusElement(focusEl || firstFileEl);
           Lampa.Controller.enable("content");
+          if (autoplayFileId && focusEl && String(focusEl.attr("data-file-id")) === autoplayFileId) {
+            const target = focusEl;
+            setTimeout(() => target.trigger("hover:enter"), 0);
+          }
           updateDebugOverlay(focusEl || firstFileEl || null);
         };
         const _getPlayerConfig = (url, file, movie) => {
@@ -5719,7 +5858,7 @@
           let rawList;
           try {
             rawList = JSON.parse(Store.get(key, "[]"));
-          } catch (_unused12) {
+          } catch (_unused13) {
             rawList = [];
           }
           if (!Array.isArray(rawList)) rawList = [];
@@ -5984,6 +6123,11 @@
             if (pendingPlayback) pendingPlayback.started = true;
             let changedAtStart = false;
             try {
+              const se = Utils.parseSeasonEpisode(file.name);
+              Store.set("torbox_continue_label_".concat(movieStorageKey()), se && se.e != null ? "S".concat(se.s || 1, " E").concat(se.e) : "");
+            } catch (_unused14) {
+            }
+            try {
               changedAtStart = _markWatched(torrentData.hash || torrentData.id, file.id);
             } catch (e) {
               LOG("Mark watched onStart error", e);
@@ -6034,7 +6178,7 @@
                 if (Lampa.Controller && typeof Lampa.Controller.collectionAppend === "function") {
                   Lampa.Controller.collectionAppend(panel);
                 }
-              } catch (_unused13) {
+              } catch (_unused15) {
               }
             } else {
               const historyItem = Lampa.Template.get("torbox_watched_item", {
@@ -6055,7 +6199,7 @@
                 if (Lampa.Controller && typeof Lampa.Controller.collectionAppend === "function") {
                   Lampa.Controller.collectionAppend(historyItem);
                 }
-              } catch (_unused14) {
+              } catch (_unused16) {
               }
             }
           } else if (panel.length) {
@@ -6065,7 +6209,7 @@
               if (window.Navigator && typeof Navigator.remove === "function" && panelEl) {
                 Navigator.remove(panelEl);
               }
-            } catch (_unused15) {
+            } catch (_unused17) {
             }
             if (focusState.zone === FocusZones.CONTINUE) {
               focusState.zone = null;
@@ -6360,6 +6504,12 @@
           if (list.length > CONST.MAX_DRAW_ITEMS) list = list.slice(0, CONST.MAX_DRAW_ITEMS);
           return list;
         };
+        const LIST_PAGE_SIZE = 15;
+        const pagedList = {
+          items: [],
+          rendered: 0,
+          render: () => 0
+        };
         const draw = (items) => {
           lastFocused = null;
           focusState.zone = null;
@@ -6371,7 +6521,7 @@
             const viewRaw = Lampa.Storage.get("view", "{}");
             const viewObj = typeof viewRaw === "string" ? JSON.parse(viewRaw) : viewRaw;
             viewDataForMovie = viewObj === null || viewObj === void 0 ? void 0 : viewObj[(_object$movie2 = object.movie) === null || _object$movie2 === void 0 ? void 0 : _object$movie2.id];
-          } catch (_unused16) {
+          } catch (_unused18) {
             viewDataForMovie = null;
           }
           if (!Array.isArray(items) || !items.length) {
@@ -6379,7 +6529,7 @@
           }
           const lastSnapshot = loadLastTorrentSnapshot();
           let lastHash = (lastSnapshot === null || lastSnapshot === void 0 ? void 0 : lastSnapshot.hash) || null;
-          items.forEach((data, idx) => {
+          const renderTorrentItem = (data, idx) => {
             const lastPlayedIcon = lastHash && data.hash === lastHash ? '<span class="torbox-item__last-played-icon"><svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14.5V7.5l5.25 3.5L11 16.5z" fill="currentColor"></path></svg></span>' : "";
             const item = Lampa.Template.get("torbox_item", _objectSpread(_objectSpread({}, data), {}, {
               last_played_icon: lastPlayedIcon
@@ -6424,10 +6574,30 @@
               });
             });
             scroll.append(item);
-          });
+            return item;
+          };
+          pagedList.items = items;
+          pagedList.rendered = 0;
+          pagedList.render = (count) => {
+            const end = Math.min(pagedList.items.length, pagedList.rendered + count);
+            for (let i = pagedList.rendered; i < end; i++) {
+              const el = renderTorrentItem(pagedList.items[i], i);
+              try {
+                if (pagedList.rendered > 0 && Lampa.Controller && typeof Lampa.Controller.collectionAppend === "function") {
+                  Lampa.Controller.collectionAppend(el);
+                }
+              } catch (_unused19) {
+              }
+            }
+            pagedList.rendered = end;
+            return end;
+          };
+          pagedList.render(LIST_PAGE_SIZE);
           Lampa.Controller.enable("content");
           updateContinueWatchingPanel(lastSnapshot);
           if (state.last_hash) {
+            const savedIdx = items.findIndex((t) => t.hash === state.last_hash);
+            if (savedIdx >= pagedList.rendered) pagedList.render(savedIdx - pagedList.rendered + LIST_PAGE_SIZE);
             const saved = scroll.render().find('[data-hash="'.concat(state.last_hash, '"]')).first();
             if (saved.length && focusElement(saved)) return;
           }
@@ -6651,7 +6821,14 @@
           filter.render().find(".filter--sort").before(cachedToggleBtn);
           updateCachedToggleVisual();
           empty(translate("torbox_loading_initial"));
-          search();
+          const continueSnap = object.torbox_continue ? loadLastTorrentSnapshot() : null;
+          if (continueSnap) {
+            state.autoplay_continue = true;
+            state.continue_skipped_search = true;
+            onTorrentClick(continueSnap);
+          } else {
+            search();
+          }
         };
         this.start = function() {
           if (Lampa.Activity.active().activity !== this.activity) return;
@@ -6665,7 +6842,14 @@
           }
         };
         this.back = function() {
-          if (state.view === "episodes") {
+          if (state.view === "episodes" && state.continue_skipped_search) {
+            state.continue_skipped_search = false;
+            state.view = "torrents";
+            filter.render().show();
+            revertPendingPlayback();
+            empty(translate("torbox_loading_initial"));
+            search();
+          } else if (state.view === "episodes") {
             state.view = "torrents";
             filter.render().show();
             revertPendingPlayback();
@@ -6684,7 +6868,7 @@
             if (scroll) scroll.destroy();
             if (files) files.destroy();
             if (filter) filter.destroy();
-          } catch (_unused17) {
+          } catch (_unused20) {
           }
           if (debugOverlayEl) {
             debugOverlayEl.remove();
@@ -6789,6 +6973,21 @@
             ru: "{value}\u0441 \u043D\u0430\u0437\u0430\u0434",
             en: "{value}s ago",
             uk: "{value}\u0441 \u0442\u043E\u043C\u0443"
+          },
+          torbox_season_n: {
+            ru: "\u0421\u0435\u0437\u043E\u043D {value}",
+            en: "Season {value}",
+            uk: "\u0421\u0435\u0437\u043E\u043D {value}"
+          },
+          torbox_episode_n: {
+            ru: "\u0421\u0435\u0440\u0438\u044F {value}",
+            en: "Episode {value}",
+            uk: "\u0421\u0435\u0440\u0456\u044F {value}"
+          },
+          torbox_continue_btn: {
+            ru: "\u041F\u0440\u043E\u0434\u043E\u043B\u0436\u0438\u0442\u044C",
+            en: "Continue",
+            uk: "\u041F\u0440\u043E\u0434\u043E\u0432\u0436\u0438\u0442\u0438"
           },
           torbox_age_minutes: {
             ru: "{value}\u043C \u043D\u0430\u0437\u0430\u0434",
@@ -7508,6 +7707,34 @@
           Lampa.Component.add("torbox_main", MainComponent);
           addTemplates();
           addSettings();
+          const addContinueButton = (root, movie) => {
+            if (!movie || root.find(".view--torbox-continue").length) return;
+            const mid = movie.imdb_id || movie.id || "unknown";
+            let snap = null;
+            try {
+              const raw = Store.get("torbox_last_torrent_data_".concat(mid), "");
+              snap = raw ? typeof raw === "string" ? JSON.parse(raw) : raw : null;
+            } catch (_unused21) {
+              snap = null;
+            }
+            if (!snap || !snap.hash || !snap.magnet) return;
+            const label = String(Store.get("torbox_continue_label_".concat(mid), "") || "");
+            const text = Lampa.Lang.translate("torbox_continue_btn") + (label ? " " + label : "");
+            const btn = $('<div class="full-start__button selector view--torbox-continue" data-subtitle="TorBox"><svg viewBox="0 0 24 24" width="24" height="24"><path d="M8 5v14l11-7z" fill="currentColor"></path></svg><span></span></div>');
+            btn.find("span").text(text);
+            btn.on("hover:enter", () => {
+              const title = movie.title || movie.name || "";
+              Lampa.Activity.push({
+                component: "torbox_main",
+                title: "".concat(Lampa.Lang.translate("title_torbox"), " - ").concat(title),
+                movie,
+                torbox_continue: true
+              });
+            });
+            const play = root.find(".button--play, .full-start__play").first();
+            if (play.length) play.after(btn);
+            else root.find(".full-start-new__buttons, .full-start__buttons").first().prepend(btn);
+          };
           const qualityBadgeCache = /* @__PURE__ */ new Map();
           const qbRank = (q) => {
             const u = String(q || "").toUpperCase();
@@ -7589,12 +7816,17 @@
             } catch (err) {
               LOG("quality badge failed", (err === null || err === void 0 ? void 0 : err.message) || err);
             }
+            try {
+              addContinueButton(root, e.data.movie);
+            } catch (err) {
+              LOG("continue button failed", (err === null || err === void 0 ? void 0 : err.message) || err);
+            }
           };
           Lampa.Listener.follow("full", fullListener);
           if (!document.getElementById("torbox-stable-styles")) {
             const css = document.createElement("style");
             css.id = "torbox-stable-styles";
-            css.textContent = '\n          .torbox-list-container { display:block; padding:1em; }\n          .torbox-item { position:relative; padding:1em 1.2em; margin:0 0 1em 0; border-radius:.8em; background: var(--color-background-light); cursor:pointer; transition:.25s; border:2px solid transparent; overflow:hidden; }\n          .torbox-item:last-child { margin-bottom:0; }\n          .torbox-item:hover, .torbox-item.focus,\n          .torbox-watched-item:hover, .torbox-watched-item.focus,\n          .torbox-file-item:hover, .torbox-file-item.focus {\n            background:var(--color-primary); color:var(--color-background); transform:translateY(-1px); border-color:rgba(255,255,255,.28);\n            box-shadow:0 6px 24px rgba(0,0,0,.18);\n          }\n          .torbox-item__title { font-weight:600; margin-bottom:.35em; font-size:1.05em; line-height:1.35; display:flex; align-items:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }\n          .torbox-item__last-played-icon { display:inline-flex; width:1.1em; height:1.1em; margin-right:.5em; color:var(--color-second); }\n          .torbox-item__last-played-icon svg{ width:100%; height:100%; }\n          .torbox-item__main-info { font-size:.95em; opacity:.95; line-height:1.4; margin-bottom:.25em; }\n          .torbox-item__meta { font-size:.88em; opacity:.75; line-height:1.4; margin-bottom:.7em; }\n          .torbox-item__progress { position:absolute; left:0; right:0; bottom:0; height:3px; background:rgba(255,255,255,.22); }\n          .torbox-item__progress > div { height:100%; background:var(--color-primary); }\n          .torbox-item__tech-bar { display:flex; flex-wrap:wrap; gap:.55em; margin:0 -1.2em -1em; padding:.6em 1.2em; background:rgba(0,0,0,.08); font-size:.84em; font-weight:500; transition:background .2s; }\n          .torbox-item__tech-item { padding:.22em .55em; border-radius:.4em; color:#fff; }\n          .torbox-item__tech-item--res { background:#3b82f6; }\n          .torbox-item__tech-item--codec { background:#16a34a; }\n          .torbox-item__tech-item--audio { background:#f97316; }\n          .torbox-item__tech-item--hdr { background:linear-gradient(45deg,#ff8c00,#ffa500); }\n          .torbox-item__tech-item--dv  { background:linear-gradient(45deg,#4b0082,#8a2be2); }\n          .torbox-cached-toggle { display:inline-flex; align-items:center; justify-content:center; border:2px solid transparent; transition:.2s; gap:.5em; padding:0 .8em; min-height:2.5em; }\n          .torbox-cached-toggle__icon { font-size:1.5em; line-height:1; }\n          .torbox-cached-toggle__label { font-size:.85em; font-weight:500; white-space:nowrap; }\n          .torbox-cached-toggle.focus, .torbox-cached-toggle:hover {\n            background:var(--color-primary); color:var(--color-background); border-color:rgba(255,255,255,.28);\n          }\n          /* "Cached only" engaged: subtle accent border, NOT the selection fill, so it\n             is not mistaken for keyboard focus (the \u26A1 icon + label already show state). */\n          .torbox-cached-toggle.torbox-cached-toggle--active:not(.focus):not(:hover) {\n            border-color:var(--color-second);\n          }\n          .torbox-file-item { display:flex; justify-content:space-between; align-items:center; gap:1em; padding:1em 1.2em; margin-bottom:1em; border-radius:.8em; background:var(--color-background-light); transition:.25s; border:2px solid transparent; }\n          .torbox-file-item__body { min-width:0; flex:1 1 auto; }\n          .torbox-file-item__title { font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }\n          .torbox-file-item__subtitle { font-size:.9em; opacity:.75; }\n          .torbox-file-download { flex:0 0 2.4em; width:2.4em; height:2.4em; display:flex; align-items:center; justify-content:center; border-radius:.5em; border:2px solid rgba(255,255,255,.18); background:rgba(0,0,0,.12); color:inherit; font-size:1.05em; line-height:1; }\n          .torbox-file-download:hover, .torbox-file-download.focus { background:var(--color-second); color:var(--color-background); border-color:rgba(255,255,255,.35); }\n          .torbox-file-download--loading { opacity:.55; pointer-events:none; }\n          .torbox-file-item--last-played { border-left:4px solid var(--color-second); }\n          .torbox-file-item--watched { color:#8a8a8a; }\n          .torbox-watched-item { display:flex; align-items:center; padding:1em; margin-bottom:1em; border-radius:.8em; background:var(--color-background-light); border-left:4px solid var(--color-second); transition:.25s; border:2px solid transparent; }\n          .torbox-watched-item__icon { flex-shrink:0; margin-right:1em; }\n          .torbox-watched-item__icon svg{ width:2em; height:2em; }\n          .torbox-watched-item__title { font-weight:600; }\n          .torbox-watched-item__info { font-size:.9em; opacity:.75; }\n        ';
+            css.textContent = '\n          .torbox-list-container { display:block; padding:1em; }\n          .torbox-item { position:relative; padding:1em 1.2em; margin:0 0 1em 0; border-radius:.8em; background: var(--color-background-light); cursor:pointer; transition:.25s; border:2px solid transparent; overflow:hidden; }\n          .torbox-item:last-child { margin-bottom:0; }\n          .torbox-item:hover, .torbox-item.focus,\n          .torbox-watched-item:hover, .torbox-watched-item.focus,\n          .torbox-file-item:hover, .torbox-file-item.focus {\n            background:var(--color-primary); color:var(--color-background); transform:translateY(-1px); border-color:rgba(255,255,255,.28);\n            box-shadow:0 6px 24px rgba(0,0,0,.18);\n          }\n          .torbox-item__title { font-weight:600; margin-bottom:.35em; font-size:1.05em; line-height:1.35; display:flex; align-items:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }\n          .torbox-item__last-played-icon { display:inline-flex; width:1.1em; height:1.1em; margin-right:.5em; color:var(--color-second); }\n          .torbox-item__last-played-icon svg{ width:100%; height:100%; }\n          .torbox-item__main-info { font-size:.95em; opacity:.95; line-height:1.4; margin-bottom:.25em; }\n          .torbox-item__meta { font-size:.88em; opacity:.75; line-height:1.4; margin-bottom:.7em; }\n          .torbox-item__progress { position:absolute; left:0; right:0; bottom:0; height:3px; background:rgba(255,255,255,.22); }\n          .torbox-item__progress > div { height:100%; background:var(--color-primary); }\n          .torbox-item__tech-bar { display:flex; flex-wrap:wrap; gap:.55em; margin:0 -1.2em -1em; padding:.6em 1.2em; background:rgba(0,0,0,.08); font-size:.84em; font-weight:500; transition:background .2s; }\n          .torbox-item__tech-item { padding:.22em .55em; border-radius:.4em; color:#fff; }\n          .torbox-item__tech-item--res { background:#3b82f6; }\n          .torbox-item__tech-item--codec { background:#16a34a; }\n          .torbox-item__tech-item--audio { background:#f97316; }\n          .torbox-item__tech-item--hdr { background:linear-gradient(45deg,#ff8c00,#ffa500); }\n          .torbox-item__tech-item--dv  { background:linear-gradient(45deg,#4b0082,#8a2be2); }\n          .torbox-cached-toggle { display:inline-flex; align-items:center; justify-content:center; border:2px solid transparent; transition:.2s; gap:.5em; padding:0 .8em; min-height:2.5em; }\n          .torbox-cached-toggle__icon { font-size:1.5em; line-height:1; }\n          .torbox-cached-toggle__label { font-size:.85em; font-weight:500; white-space:nowrap; }\n          .torbox-cached-toggle.focus, .torbox-cached-toggle:hover {\n            background:var(--color-primary); color:var(--color-background); border-color:rgba(255,255,255,.28);\n          }\n          /* "Cached only" engaged: subtle accent border, NOT the selection fill, so it\n             is not mistaken for keyboard focus (the \u26A1 icon + label already show state). */\n          .torbox-cached-toggle.torbox-cached-toggle--active:not(.focus):not(:hover) {\n            border-color:var(--color-second);\n          }\n          .torbox-file-item { display:flex; justify-content:space-between; align-items:center; gap:1em; padding:1em 1.2em; margin-bottom:1em; border-radius:.8em; background:var(--color-background-light); transition:.25s; border:2px solid transparent; }\n          .torbox-file-item__body { min-width:0; flex:1 1 auto; }\n          .torbox-file-item__title { font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }\n          .torbox-file-item__subtitle { font-size:.9em; opacity:.75; }\n          .torbox-file-download { flex:0 0 2.4em; width:2.4em; height:2.4em; display:flex; align-items:center; justify-content:center; border-radius:.5em; border:2px solid rgba(255,255,255,.18); background:rgba(0,0,0,.12); color:inherit; font-size:1.05em; line-height:1; }\n          .torbox-file-download:hover, .torbox-file-download.focus { background:var(--color-second); color:var(--color-background); border-color:rgba(255,255,255,.35); }\n          .torbox-file-download--loading { opacity:.55; pointer-events:none; }\n          .torbox-file-item--last-played { border-left:4px solid var(--color-second); }\n          .torbox-file-item--watched { color:#8a8a8a; }\n          .torbox-watched-item { display:flex; align-items:center; padding:1em; margin-bottom:1em; border-radius:.8em; background:var(--color-background-light); border-left:4px solid var(--color-second); transition:.25s; border:2px solid transparent; }\n          .torbox-watched-item__icon { flex-shrink:0; margin-right:1em; }\n          .torbox-watched-item__icon svg{ width:2em; height:2em; }\n          .torbox-watched-item__title { font-weight:600; }\n          .torbox-watched-item__info { font-size:.9em; opacity:.75; }\n          /* TV performance: no animated transforms/shadows/transitions */\n          .torbox-item, .torbox-file-item, .torbox-watched-item, .torbox-item__tech-bar, .torbox-cached-toggle { transition:none !important; }\n          .torbox-item.focus, .torbox-file-item.focus, .torbox-watched-item.focus,\n          .torbox-item:hover, .torbox-file-item:hover, .torbox-watched-item:hover { transform:none !important; box-shadow:none !important; }\n          .torbox-file-item { position:relative; overflow:hidden; }\n          .torbox-season-tabs { display:flex; flex-wrap:wrap; margin:0 0 1em 0; }\n          .torbox-season-tab { padding:.5em 1.1em; margin:0 .6em .6em 0; border-radius:.6em; background:var(--color-background-light); border:2px solid transparent; font-weight:600; }\n          .torbox-season-tab.active { border-color:var(--color-second); }\n          .torbox-season-tab.focus, .torbox-season-tab:hover { background:var(--color-primary); color:var(--color-background); }\n          /* flex gap is missing on older Tizen engines */\n          .torbox-item__tech-item { margin:0 .3em .3em 0; }\n        ';
             document.head.appendChild(css);
           }
           try {
@@ -7608,7 +7840,7 @@
             LOG("Manifest registration fallback", (e === null || e === void 0 ? void 0 : e.message) || e);
             try {
               Lampa.Manifest.plugins[manifest.name] = manifest;
-            } catch (_unused18) {
+            } catch (_unused22) {
             }
           }
           LOG("TorBox plugin ready", manifest.version);
@@ -7628,12 +7860,12 @@
   } catch (torboxFatalError) {
     try {
       console.error("[TorBox] fatal boot error", torboxFatalError);
-    } catch (_unused19) {
+    } catch (_unused23) {
     }
     try {
       const msg = torboxFatalError && torboxFatalError.stack ? torboxFatalError.stack : String(torboxFatalError);
       localStorage.setItem("torbox_boot_error", msg);
-    } catch (_unused20) {
+    } catch (_unused24) {
     }
     try {
       if ((_window$Lampa2 = window.Lampa) !== null && _window$Lampa2 !== void 0 && _window$Lampa2.Noty) {
@@ -7641,7 +7873,7 @@
           type: "error"
         });
       }
-    } catch (_unused21) {
+    } catch (_unused25) {
     }
   }
   var _window$Lampa2;
