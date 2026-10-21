@@ -7508,6 +7508,62 @@
           Lampa.Component.add("torbox_main", MainComponent);
           addTemplates();
           addSettings();
+          const qualityBadgeCache = /* @__PURE__ */ new Map();
+          const QB_RANK = {
+            "4K": 4,
+            FHD: 3,
+            HD: 2,
+            SD: 1
+          };
+          const renderQualityBadge = (root, info) => {
+            if (!info || !root || root.find(".torbox-qbadge").length) return;
+            const isTs = info.best === "TS/CAM";
+            const text = isTs ? "\u042D\u043A\u0440\u0430\u043D\u043A\u0430" : info.best + (info.hasTs ? " \xB7 \u0435\u0441\u0442\u044C TS" : "");
+            const badge = $('<div class="full-start__status torbox-qbadge"></div>').text(text);
+            badge.css({
+              marginLeft: "0.6em",
+              whiteSpace: "nowrap"
+            });
+            if (isTs) badge.css({
+              color: "#ff9f43",
+              borderColor: "#ff9f43"
+            });
+            const status = root.find(".full-start__status").not(".torbox-qbadge").last();
+            if (status.length) return status.after(badge);
+            const line = root.find(".full-start-new__rate-line, .full-start__rate-line").first();
+            if (line.length) return line.append(badge);
+            root.find(".full-start-new__buttons, .full-start__buttons").first().before(badge);
+          };
+          const addQualityBadge = (root, movie) => {
+            if (!movie) return;
+            const key = (movie.name ? "tv" : "movie") + ":" + (movie.id || movie.title || movie.name);
+            if (qualityBadgeCache.has(key)) return renderQualityBadge(root, qualityBadgeCache.get(key));
+            const controller = new AbortController();
+            Api.searchPublicTrackers(movie, controller.signal).then((payload) => {
+              const map = payload === null || payload === void 0 ? void 0 : payload.entriesByHash;
+              if (!(map instanceof Map) || !map.size) return;
+              let best = null;
+              let hasTs = false;
+              map.forEach((raw) => {
+                const q = Utils.getQualityLabel((raw === null || raw === void 0 ? void 0 : raw.Title) || "", raw);
+                if (q === "TS/CAM") {
+                  hasTs = true;
+                  return;
+                }
+                if (!best || (QB_RANK[q] || 0) > (QB_RANK[best] || 0)) best = q;
+              });
+              const info = best ? {
+                best,
+                hasTs
+              } : hasTs ? {
+                best: "TS/CAM",
+                hasTs
+              } : null;
+              if (!info) return;
+              qualityBadgeCache.set(key, info);
+              if (document.body.contains(root[0])) renderQualityBadge(root, info);
+            }).catch((err) => LOG("quality badge search failed", (err === null || err === void 0 ? void 0 : err.message) || err));
+          };
           if (fullListener) Lampa.Listener.remove("full", fullListener);
           fullListener = (e) => {
             var _e$data, _e$object, _e$object$render;
@@ -7518,6 +7574,11 @@
             btn.on("hover:enter", () => launchTorBox(e.data.movie || {}));
             const torrentBtn = root.find(".view--torrent");
             torrentBtn.length ? torrentBtn.after(btn) : root.find(".full-start__play").after(btn);
+            try {
+              addQualityBadge(root, e.data.movie);
+            } catch (err) {
+              LOG("quality badge failed", (err === null || err === void 0 ? void 0 : err.message) || err);
+            }
           };
           Lampa.Listener.follow("full", fullListener);
           if (!document.getElementById("torbox-stable-styles")) {
