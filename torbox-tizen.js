@@ -4110,6 +4110,10 @@
         },
         getQualityLabel(title = "", raw) {
           var _raw$info;
+          {
+            const t = String(title || "").replace(/зв[уy]к\s*(с|from)\s*(ts|cam|tc)\b/gi, " ");
+            if (/(^|[\s.\[\](){}_,|\/-])(cam|camrip|hdcam|hd-?ts|ts|tsrip|telesync|tc|telecine|hd-?tc)(?=$|[\s.\[\](){}_,|\/-])/i.test(t) || /камрип|экранк|телесинк/i.test(t)) return "TS/CAM";
+          }
           if (raw !== null && raw !== void 0 && (_raw$info = raw.info) !== null && _raw$info !== void 0 && _raw$info.quality) {
             const normalized = String(raw.info.quality).replace(/[^0-9a-z.+-]/gi, "").toUpperCase();
             if (normalized) {
