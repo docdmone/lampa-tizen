@@ -7509,11 +7509,21 @@
           addTemplates();
           addSettings();
           const qualityBadgeCache = /* @__PURE__ */ new Map();
-          const QB_RANK = {
-            "4K": 4,
-            FHD: 3,
-            HD: 2,
-            SD: 1
+          const qbRank = (q) => {
+            const u = String(q || "").toUpperCase();
+            if (u === "4K" || u === "UHD") return 2160;
+            if (u === "FHD") return 1080;
+            if (u === "HD") return 720;
+            if (u === "SD") return 480;
+            const n = parseInt(u, 10);
+            return isFinite(n) ? n : 0;
+          };
+          const qbName = (q) => {
+            const r = qbRank(q);
+            if (r >= 2160) return "4K";
+            if (r >= 1080) return "1080p";
+            if (r >= 720) return "720p";
+            return r ? r + "p" : "SD";
           };
           const renderQualityBadge = (root, info) => {
             if (!info || !root || root.find(".torbox-qbadge").length) return;
@@ -7550,10 +7560,10 @@
                   hasTs = true;
                   return;
                 }
-                if (!best || (QB_RANK[q] || 0) > (QB_RANK[best] || 0)) best = q;
+                if (!best || qbRank(q) > qbRank(best)) best = q;
               });
               const info = best ? {
-                best,
+                best: qbName(best),
                 hasTs
               } : hasTs ? {
                 best: "TS/CAM",
