@@ -41,7 +41,22 @@ jobs:
         run: |
           node "$RUNNER_TEMP/tizenjs/cli.js" build . -t wgt -o "$GITHUB_WORKSPACE/Lampa.wgt" \
             --author "$RUNNER_TEMP/author.p12" --authorPwd "$CERT_PW" -p public
-          unzip -l "$GITHUB_WORKSPACE/Lampa.wgt" | grep -E "config.xml|signature"
+
+      # The TV's installer fails with "Unzip error" on folder entries, which JSZip adds.
+      # Repack with files only (all deflated); the signatures cover files, so they stay valid.
+      - name: Repack without folder entries
+        run: |
+          python3 - <<'EOF'
+          import zipfile
+          src = zipfile.ZipFile('Lampa.wgt')
+          files = [(i.filename, src.read(i)) for i in src.infolist() if not i.filename.endswith('/')]
+          src.close()
+          with zipfile.ZipFile('Lampa.wgt', 'w', zipfile.ZIP_DEFLATED) as out:
+              for name, data in files:
+                  out.writestr(name, data)
+          EOF
+          unzip -l Lampa.wgt | grep -E "config.xml|signature"
+          ! unzip -l Lampa.wgt | awk '{print $4}' | grep -q '/$'
 
       - name: Publish release
         env:
