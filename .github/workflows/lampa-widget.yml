@@ -27,6 +27,11 @@ jobs:
         run: |
           git clone --depth 1 https://github.com/reisxd/tizen.js "$RUNNER_TEMP/tizenjs"
           cd "$RUNNER_TEMP/tizenjs" && npm install --omit=dev --no-audit --no-fund
+          # tizen.js makes the author certificate valid for a year, past the end of the
+          # Tizen Developers CA (2027-01-01), so the TV rejects the chain ("Invalid signature").
+          # End it with the CA, as Tizen Studio does.
+          sed -i "s|cert.validity.notAfter = new Date(Date.now() + 365 \* 24 \* 60 \* 60 \* 1000);|cert.validity.notAfter = new Date('2027-01-01T00:00:00Z');|" src/tizenCertificateCreator.js
+          grep -q "2027-01-01T00:00:00Z" src/tizenCertificateCreator.js
 
       - name: Make a Tizen author certificate
         run: |
