@@ -42,20 +42,28 @@ jobs:
           node "$RUNNER_TEMP/tizenjs/cli.js" build . -t wgt -o "$GITHUB_WORKSPACE/Lampa.wgt" \
             --author "$RUNNER_TEMP/author.p12" --authorPwd "$CERT_PW" -p public
 
-      # The TV's installer fails with "Unzip error" on folder entries, which JSZip adds.
-      # Repack with files only (all deflated); the signatures cover files, so they stay valid.
-      - name: Repack without folder entries
+      # The TV's installer failed with "Unzip error" (118, -23) on the JSZip output.
+      # Repack it the way known-good Tizen packages look: files only, no folder entries,
+      # author-signature.xml first, DOS-style headers with no Unix permission bits.
+      # The signatures cover file contents only, so they stay valid.
+      - name: Repack like a standard Tizen package
         run: |
-          python3 - <<'EOF'
+          python3 - <<'PY'
           import zipfile
           src = zipfile.ZipFile('Lampa.wgt')
-          files = [(i.filename, src.read(i)) for i in src.infolist() if not i.filename.endswith('/')]
+          files = {i.filename: src.read(i) for i in src.infolist() if not i.filename.endswith('/')}
           src.close()
-          with zipfile.ZipFile('Lampa.wgt', 'w', zipfile.ZIP_DEFLATED) as out:
-              for name, data in files:
-                  out.writestr(name, data)
-          EOF
-          unzip -l Lampa.wgt | grep -E "config.xml|signature"
+          head = ['author-signature.xml', 'signature1.xml', 'config.xml']
+          order = head + sorted(n for n in files if n not in head)
+          with zipfile.ZipFile('Lampa.wgt', 'w') as out:
+              for name in order:
+                  info = zipfile.ZipInfo(name, date_time=(2026, 1, 1, 0, 0, 0))
+                  info.compress_type = zipfile.ZIP_DEFLATED
+                  info.create_system = 0
+                  info.external_attr = 0
+                  out.writestr(info, files[name])
+          PY
+          unzip -l Lampa.wgt | head -8
           ! unzip -l Lampa.wgt | awk '{print $4}' | grep -q '/$'
 
       - name: Publish release
