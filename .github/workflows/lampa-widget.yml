@@ -1,0 +1,53 @@
+name: Lampa Tizen widget
+
+# Builds widget/ into a signed Lampa.wgt and publishes it as the latest release,
+# so TizenBrew Installer can install it by typing docdmone/lampa-tizen.
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'widget/**'
+      - '.github/workflows/lampa-widget.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Get tizen.js (signs Tizen packages without Tizen Studio)
+        run: |
+          git clone --depth 1 https://github.com/reisxd/tizen.js "$RUNNER_TEMP/tizenjs"
+          cd "$RUNNER_TEMP/tizenjs" && npm install --omit=dev --no-audit --no-fund
+
+      - name: Make a Tizen author certificate
+        run: |
+          PW=$(openssl rand -hex 16)
+          echo "::add-mask::$PW"
+          echo "CERT_PW=$PW" >> "$GITHUB_ENV"
+          node "$RUNNER_TEMP/tizenjs/cli.js" create-tizen-cert \
+            --name "Lampa for Tizen" --password "$PW" --output "$RUNNER_TEMP/author.p12"
+
+      - name: Build and sign Lampa.wgt
+        working-directory: widget
+        run: |
+          node "$RUNNER_TEMP/tizenjs/cli.js" build . -t wgt -o "$GITHUB_WORKSPACE/Lampa.wgt" \
+            --author "$RUNNER_TEMP/author.p12" --authorPwd "$CERT_PW" -p public
+          unzip -l "$GITHUB_WORKSPACE/Lampa.wgt" | grep -E "config.xml|signature"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "widget-${{ github.run_number }}" Lampa.wgt \
+            --title "Lampa widget ${{ github.run_number }}" \
+            --notes "Lampa for Samsung Tizen (2017-2022 TVs). Install with TizenBrew Installer: docdmone/lampa-tizen" \
+            --latest
