@@ -5685,7 +5685,8 @@
             vids.sort((a, b) => (a.__s || 0) - (b.__s || 0) || (a.__e == null ? 1e6 : a.__e) - (b.__e == null ? 1e6 : b.__e) || a.__idx - b.__idx);
           }
           const seasons = pretty ? Array.from(new Set(vids.filter((f) => f.__s != null).map((f) => f.__s))).sort((a, b) => a - b) : [];
-          const useSeasons = seasons.length > 1;
+          // Season tabs disabled: all episodes go in one list, sorted by season/episode, with an "S{n} · " prefix.
+          const useSeasons = false;
           const tlPercent = (f) => {
             if (!pretty || f.__e == null || !Lampa.Timeline || typeof Lampa.Timeline.view !== "function") return 0;
             try {
