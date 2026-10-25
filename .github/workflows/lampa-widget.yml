@@ -32,6 +32,10 @@ jobs:
           # End it with the CA, as Tizen Studio does.
           sed -i "s|cert.validity.notAfter = new Date(Date.now() + 365 \* 24 \* 60 \* 60 \* 1000);|cert.validity.notAfter = new Date('2027-01-01T00:00:00Z');|" src/tizenCertificateCreator.js
           grep -q "2027-01-01T00:00:00Z" src/tizenCertificateCreator.js
+          # tizen.js also puts the CA's private key into the author .p12 instead of the
+          # generated author key, so the author signature doesn't match the author certificate.
+          sed -i "s|toPkcs12Asn1(developerPrivateKey,|toPkcs12Asn1(key.privateKey,|" src/tizenCertificateCreator.js
+          grep -q "toPkcs12Asn1(key.privateKey," src/tizenCertificateCreator.js
 
       - name: Make a Tizen author certificate
         run: |
